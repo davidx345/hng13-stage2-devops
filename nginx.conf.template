@@ -1,0 +1,47 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    # Define upstream servers
+    upstream backend {
+        # Primary server (Blue)
+        server app_blue:8080 max_fails=2 fail_timeout=10s;
+        
+        # Backup server (Green) - only used when primary fails
+        server app_green:8080 backup;
+        
+        # Keep connections alive
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            # Proxy to backend upstream
+            proxy_pass http://backend;
+            
+            # Retry conditions - retry on these errors
+            proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
+            proxy_next_upstream_tries 2;
+            proxy_next_upstream_timeout 10s;
+            
+            # Timeouts - keep them tight for fast failover
+            proxy_connect_timeout 2s;
+            proxy_send_timeout 5s;
+            proxy_read_timeout 5s;
+            
+            # Preserve original headers
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Ensure app headers are forwarded to client
+            # This allows X-App-Pool and X-Release-Id to pass through
+            proxy_hide_header X-Powered-By;
+        }
+    }
+}
