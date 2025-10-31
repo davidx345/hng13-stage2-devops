@@ -1,0 +1,205 @@
+# Stage 3 Implementation - COMPLETE AND READY FOR SUBMISSION
+
+## ✅ ALL REQUIRED FILES CREATED
+
+## What Was Implemented
+
+1. **Nginx Custom Logging** (`nginx.conf.template`)
+   - Custom log format that captures:
+     - `pool=<blue|green>` (from X-App-Pool header)
+     - `release=<version>` (from X-Release-Id header)
+     - `upstream_status=<code>` (HTTP status from upstream)
+     - `upstream=<ip>` (which upstream served it)
+     - `request_time=<ms>` (request latency)
+     - `upstream_response_time=<ms>` (upstream response time)
+   - Logs to `/var/log/nginx/access.log` (shared volume)
+
+2. **Shared Log Volume** (`docker-compose.yml`)
+   - Named volume `nginx_logs` mounts to `/var/log/nginx` in both nginx and watcher services
+   - Allows real-time log tailing
+
+3. **Alert Watcher Service** (`watcher.py` + `requirements.txt`)
+   - Tails the Nginx log file in real time
+   - Detects **failover events**: when pool changes from blue→green or green→blue
+   - Tracks **error rate** over a sliding window (default: last 200 requests)
+   - Sends **Slack alerts** via webhook when:
+     - Failover occurs
+     - Error rate exceeds threshold (default: >2%)
+   - Rate-limits alerts with cooldown (default: 300 seconds between same-type alerts)
+
+4. **Environment Configuration** (`.env.example`)
+   - `SLACK_WEBHOOK_URL`: Your Slack incoming webhook URL
+   - `ERROR_RATE_THRESHOLD`: Error rate threshold percentage (default: 2)
+   - `WINDOW_SIZE`: Rolling window size (default: 200 requests)
+   - `ALERT_COOLDOWN_SEC`: Seconds between alerts of same type (default: 300)
+
+---
+
+## How to Get the Screenshots for Submission
+
+### Setup Steps (Do This First)
+
+1. **Get a Slack Webhook URL**:
+   - Go to https://api.slack.com/apps
+   - Create a new app (or use existing)
+   - Enable "Incoming Webhooks"
+   - Create a new webhook for your channel
+   - Copy the webhook URL
+
+2. **Update your `.env` file**:
+   ```bash
+   BLUE_IMAGE=yimikaade/wonderful:devops-stage-two
+   GREEN_IMAGE=yimikaade/wonderful:devops-stage-two
+   SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+   ERROR_RATE_THRESHOLD=2
+   WINDOW_SIZE=200
+   ALERT_COOLDOWN_SEC=300
+   ```
+
+3. **Start Docker Compose**:
+   ```bash
+   docker-compose up -d
+   wait 10 seconds for services to start
+   ```
+
+4. **Verify Nginx is logging correctly**:
+   ```bash
+   docker exec nginx_proxy tail -f /var/log/nginx/access.log
+   ```
+   You should see lines with `pool=blue`, `release=...`, `upstream_status=...`
+
+---
+
+### Screenshot 1: Slack Alert – Failover Event
+
+**What to do**:
+1. Make some normal requests to verify Blue is active:
+   ```bash
+   curl http://localhost:8080/version
+   curl http://localhost:8080/version
+   ```
+
+2. Trigger chaos on Blue to force failover:
+   ```bash
+   curl -X POST http://localhost:8081/chaos/start?mode=error
+   ```
+
+3. Make more requests to trigger failover detection:
+   ```bash
+   for i in {1..5}; do curl -s http://localhost:8080/version; sleep 1; done
+   ```
+
+4. **Watch your Slack channel** for an alert message like:
+   ```
+   ⚠️ Failover Detected
+   Primary pool switched from `blue` to `green`
+   Release: `v1.1.0-green`
+   ```
+
+5. **Take a screenshot** of this Slack message (include timestamp)
+
+---
+
+### Screenshot 2: Slack Alert – High Error Rate
+
+**What to do**:
+1. Keep chaos running on Blue (don't stop it yet)
+
+2. Make many requests rapidly to accumulate errors in the window:
+   ```bash
+   for i in {1..50}; do curl -s http://localhost:8080/version > /dev/null; sleep 0.1; done
+   ```
+
+3. If the error rate exceeds 2%, you'll see a Slack alert like:
+   ```
+   📈 High Error Rate
+   Error rate: 5.2% (10/200 requests) - Threshold: 2%
+   ```
+
+4. **Take a screenshot** of this alert
+
+**Note**: If you don't see this alert immediately, adjust `ERROR_RATE_THRESHOLD` lower in `.env` or `WINDOW_SIZE` smaller to make it easier to trigger.
+
+---
+
+### Screenshot 3: Container Logs – Nginx Log Line
+
+**What to do**:
+1. View the Nginx logs in real time:
+   ```bash
+   docker exec nginx_proxy tail -f /var/log/nginx/access.log
+   ```
+
+2. Make a request:
+   ```bash
+   curl http://localhost:8080/version
+   ```
+
+3. You'll see a log line like:
+   ```
+   127.0.0.1 - - [31/Oct/2025:14:23:45 +0000] "GET /version HTTP/1.1" 200 256 "-" "curl/7.68.0" pool=green release=v1.1.0-green upstream_status=200 upstream=172.18.0.4:8080 request_time=0.025 upstream_response_time=0.021
+   ```
+
+4. **Take a screenshot** showing:
+   - The log line with all fields visible
+   - `pool=green` or `pool=blue`
+   - `upstream_status=200` or `5xx`
+   - `upstream=<ip>:port`
+   - `request_time=<ms>`
+
+---
+
+## Quick Command Reference for Testing
+
+```bash
+# Start everything
+docker-compose up -d
+
+# Check if watcher is running and watching logs
+docker logs -f alert_watcher
+
+# Check Nginx logs
+docker exec nginx_proxy tail -f /var/log/nginx/access.log
+
+# Normal request (Blue)
+curl http://localhost:8080/version
+
+# Trigger chaos (Blue fails)
+curl -X POST http://localhost:8081/chaos/start?mode=error
+
+# Stop chaos
+curl -X POST http://localhost:8081/chaos/stop
+
+# Rapid requests for error rate testing
+for i in {1..50}; do curl -s http://localhost:8080/version > /dev/null; sleep 0.1; done
+
+# Stop everything
+docker-compose down
+```
+
+---
+
+## Troubleshooting
+
+**Q: No Slack alerts appearing?**
+- Check if `SLACK_WEBHOOK_URL` is set correctly
+- Check watcher logs: `docker logs alert_watcher`
+- Verify webhook is working by testing in Slack UI
+
+**Q: Logs not showing?**
+- Verify log volume mount: `docker inspect nginx_proxy | grep -A 5 Mounts`
+- Check if log file exists: `docker exec nginx_proxy ls -la /var/log/nginx/`
+
+**Q: Failover not being detected?**
+- Check if watcher is parsing logs correctly: `docker logs alert_watcher`
+- Make sure you're hitting enough requests after failover
+
+---
+
+## Files Created/Modified
+
+- ✅ `nginx.conf.template` - Added custom log format
+- ✅ `docker-compose.yml` - Added watcher service, log volume
+- ✅ `watcher.py` - Python log watcher with Slack alerting
+- ✅ `requirements.txt` - Python dependencies
+- ✅ `.env.example` - Added Stage 3 variables

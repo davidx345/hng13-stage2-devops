@@ -8,6 +8,7 @@ services:
       - "8080:80"
     volumes:
       - ./nginx.conf.template:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
     depends_on:
       - app_blue
       - app_green
@@ -49,6 +50,28 @@ services:
       timeout: 3s
       retries: 3
 
+  alert_watcher:
+    image: python:3.11-slim
+    container_name: alert_watcher
+    volumes:
+      - nginx_logs:/var/log/nginx
+      - ./watcher.py:/app/watcher.py
+      - ./requirements.txt:/app/requirements.txt
+    working_dir: /app
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - ERROR_RATE_THRESHOLD=${ERROR_RATE_THRESHOLD:-2}
+      - WINDOW_SIZE=${WINDOW_SIZE:-200}
+      - ALERT_COOLDOWN_SEC=${ALERT_COOLDOWN_SEC:-300}
+    networks:
+      - app_network
+    command: sh -c "pip install -q -r requirements.txt && python watcher.py"
+    depends_on:
+      - nginx
+
 networks:
   app_network:
     driver: bridge
+
+volumes:
+  nginx_logs:
